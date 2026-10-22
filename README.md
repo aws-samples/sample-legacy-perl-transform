@@ -19,8 +19,9 @@ extended here to a Perl source and a Python target.
 
 ![Target architecture: Perl to Python modernization with AWS Transform custom](docs/architecture.png)
 
-Legacy Perl is staged in a standardized four-folder structure with an
-authoritative reference guide. AWS Transform custom extracts business rules
+Legacy Perl is staged in a standardized workload layout (`source-code`,
+`input-data`, `output-data`, and a `reference` guide). AWS Transform custom
+extracts business rules
 (human-reviewed), then generates the Python 3.12 application and validates it
 against baselines captured from the original Perl program, iterating until the
 behavior matches. Equivalence is proven by test: byte-exact for deterministic
@@ -37,13 +38,14 @@ A two-stage, human-gated workflow:
 ┌──────────────┐   ┌─────────────────────┐   ┌──────────────────────────┐
 │ Prepare      │──▶│ Stage 1: Business   │──▶│ Stage 2: Generate +      │
 │ inputs       │   │ Rule Extraction     │   │ validate (Python 3.12)   │
-│ (4 folders + │   │ (+ human review)    │   │ generate → test → fix    │
+│ (workload +  │   │ (+ human review)    │   │ generate → test → fix    │
 │  reference)  │   │                     │   │ until equivalent         │
 └──────────────┘   └─────────────────────┘   └──────────────────────────┘
 ```
 
-1. **Prepare inputs** — a standardized four-folder structure plus an
-   authoritative reference guide (see [Repository structure](#repository-structure)).
+1. **Prepare inputs** — a standardized workload layout: `source-code`,
+   `input-data`, `output-data`, and a `reference` guide
+   (see [Repository structure](#repository-structure)).
 2. **Stage 1 — Business Rule Extraction (BRE).** The AWS-managed
    `AWS/business-rules-extraction` transformation statically analyzes the Perl
    source and produces a rewrite-ready specification. A human reviews it before
@@ -223,8 +225,11 @@ hash-dump order is non-deterministic.
 
 ## Example output
 
-After a successful Stage 2 run, AWS Transform custom generates a Python app
-under `test/python-app/`. For the sample `log_processor.pl`, the generated
+This repository ships **input-only** — the generated `test/python-app/` is not
+committed; AWS Transform custom produces it when you run Stage 2 (which is why
+the console snippets below are illustrative of a run, not files in a fresh
+clone). After a successful Stage 2 run, the generated app lands under
+`test/python-app/`. For the sample `log_processor.pl`, the generated
 `log_processor.py` is idiomatic Python 3.12. The legacy Perl regex-capture loop
 over a bracketed access log — for example
 `[2026-10-08 10:15:30] 192.168.1.45 GET /api/v1/users - 200` — becomes a

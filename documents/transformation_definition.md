@@ -16,16 +16,24 @@ Python 3.12 applications, using a pre-generated and human-reviewed Business Rule
 Extract (BRE) plus an authoritative Perl coding/modernization reference guide,
 then validate the generated app against the Perl program's actual output.
 
-## Expected repository inputs (four-folder structure + reference + BRE)
+## Expected repository inputs (standardized workload layout + BRE)
+
+The transformation is pointed at a workload directory with this layout. The
+four input folders (`source-code`, `input-data`, `output-data`, `reference`) are
+present from the start; `business-rules-extraction/` is produced by Stage 1.
 
 ```
-<repo>/
+<workload>/
 ├── source-code/                 # the legacy Perl program(s)
 ├── input-data/                  # input fixtures
 ├── output-data/                 # authoritative baselines captured from real Perl
-├── reference/                   # perl-coding-and-modernization-guide.md
+├── reference/                   # perl-coding-and-modernization-guide.md (read during the run)
 └── business-rules-extraction/   # reviewed BRE (produced in Stage 1)
 ```
+
+In this sample, the workload is the `test/` directory, so the reference guide
+the transformation reads at runtime is `test/reference/`. An identical copy
+lives at `documents/perl-coding-and-modernization-guide.md` for browsing.
 
 ## Two-stage workflow
 
@@ -69,7 +77,11 @@ providing this document and the reference guide as references:
 atx
 # then: "Create a custom transformation named Perl5-to-Python312-Modernization
 #        using the specification in documents/transformation_definition.md and
-#        the reference guide in reference/perl-coding-and-modernization-guide.md"
+#        the reference guide in documents/perl-coding-and-modernization-guide.md"
 ```
+
+Both reference files are read from `documents/` at definition-creation time. At
+*run* time (Stage 2), the transformation separately reads the reference guide
+from inside the workload (`test/reference/`); the two copies are identical.
 
 Review, then publish to your organization's registry.
