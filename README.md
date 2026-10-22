@@ -15,6 +15,20 @@ extended here to a Perl source and a Python target.
 
 ---
 
+## Architecture
+
+![Target architecture: Perl to Python modernization with AWS Transform custom](docs/architecture.png)
+
+Legacy Perl is staged in a standardized four-folder structure with an
+authoritative reference guide. AWS Transform custom extracts business rules
+(human-reviewed), then generates the Python 3.12 application and validates it
+against baselines captured from the original Perl program, iterating until the
+behavior matches. Equivalence is proven by test: byte-exact for deterministic
+output, and documented semantic comparison for non-deterministic output (such as
+`Data::Dumper`).
+
+---
+
 ## How it works
 
 A two-stage, human-gated workflow:
