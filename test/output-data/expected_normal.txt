@@ -1,0 +1,1 @@
+Successfully processed 7 records from input-data/app_traffic.log.
