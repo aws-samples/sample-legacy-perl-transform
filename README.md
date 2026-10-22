@@ -85,14 +85,19 @@ atx custom def list --json   # confirms your permissions work
 
 From the repository root:
 
-### 1. Capture baselines from the original Perl
+The repository is already a Git repo (you cloned it), so no `git init` is
+needed — `atx` just requires the working directory to be under Git, which it
+already is.
+
+### 1. (Optional) Capture baselines from the original Perl
+
+The sample already ships the baselines under `test/output-data/`. Only
+regenerate them if you change the Perl program:
 
 ```bash
 cd test
 perl source-code/log_processor.pl --file input-data/app_traffic.log > output-data/expected_normal.txt
-# (the sample ships baselines already; regenerate if you change the program)
 cd ..
-git init && git add . && git commit -m "Initial commit"
 ```
 
 ### 2. Create and publish the transformation definition (one-time)
@@ -105,6 +110,9 @@ atx
 # documents/perl-coding-and-modernization-guide.md as references. Then publish it.
 ```
 
+The transformation definition is **recreated from the specification**, not
+restored from a binary artifact: `documents/transformation_definition.md` is the
+human-readable spec, and the `atx` agent builds the published definition from it.
 See [`documents/transformation_definition.md`](documents/transformation_definition.md)
 for the full specification.
 
@@ -146,21 +154,30 @@ sample-perl-to-python-transform/
 ├── documents/
 │   ├── transformation_definition.md       # the custom TD specification
 │   └── perl-coding-and-modernization-guide.md  # authoritative Perl→Python reference
-└── test/                                  # sample Perl workload
+└── test/                                  # sample Perl workload (the transform target)
     ├── source-code/
     │   └── log_processor.pl                # legacy Perl program
     ├── input-data/
     │   ├── app_traffic.log                 # normal fixture
     │   └── empty_match.log                 # zero-match fixture
-    └── output-data/                        # authoritative Perl baselines
-        ├── expected_normal.txt
-        ├── expected_verbose.txt
-        ├── expected_dryrun.txt
-        └── expected_zero.txt
+    ├── output-data/                        # authoritative Perl baselines
+    │   ├── expected_normal.txt
+    │   ├── expected_verbose.txt
+    │   ├── expected_dryrun.txt
+    │   ├── expected_zero.txt
+    │   └── expected_zero_dryrun.txt
+    └── reference/                          # reference guide, inside the workload
+        └── perl-coding-and-modernization-guide.md
 ```
 
+> The reference guide lives in two places on purpose: `documents/` is the
+> human-readable copy for browsing this repo, and `test/reference/` is the copy
+> AWS Transform custom reads during a run (the transformation looks for the guide
+> inside the workload it is pointed at). They are identical.
+
 After a run, AWS Transform custom adds `test/business-rules-extraction/` (Stage 1)
-and `test/python-app/` (Stage 2, the generated application and tests).
+and `test/python-app/` (Stage 2, the generated application and tests). Both are
+git-ignored so a fresh clone stays input-only.
 
 ---
 
@@ -190,10 +207,92 @@ hash-dump order is non-deterministic.
 
 ---
 
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `atx` reports the working directory is not a Git repository | You ran `atx` outside the cloned repo, or in a copied subfolder that lost `.git`. | Run from the repository root (the clone is already a Git repo). If you copied the `test/` folder elsewhere, run `git init` there. |
+| The transformation does not find the reference guide | The guide must live **inside** the workload you point `atx` at (`test/reference/`), not only in `documents/`. | Keep `test/reference/perl-coding-and-modernization-guide.md` in place; it is identical to the `documents/` copy. |
+| Stage 2 generation is weak or misses rules | Stage 1 (BRE) was skipped or not reviewed. | Always run `AWS/business-rules-extraction` first, review `test/business-rules-extraction/`, then run the custom transformation. The custom definition consumes the reviewed BRE. |
+| `atx custom def list` fails with an access error | Missing the `AWSTransformCustomFullAccess` policy, or wrong region. | Attach the policy to your identity and set a supported AWS Transform region (e.g. `us-east-1`). Re-run `aws sts get-caller-identity` to confirm. |
+| Generated Python output differs from the baseline on `Data::Dumper` dumps | Perl hash-dump order is non-deterministic. | This is expected — equivalence here is **semantic** (same records and values), not byte-exact. Compare the parsed structure, not the raw text. |
+| A run takes much longer than expected | BRE (~15–20 min) and generation (~18 min) are long-running; CLI timeouts may fire before they finish. | Let the run complete and inspect the artifacts afterward rather than relying on the command returning. |
+| Byte-exact diff fails on numbers | Perl and Python round/format floats differently. | The reference guide's hardening rules cover this (printf-safe formatting, number-vs-string context); ensure the latest guide is in `test/reference/`. |
+
+---
+
+## Example output
+
+After a successful Stage 2 run, AWS Transform custom generates a Python app
+under `test/python-app/`. For the sample `log_processor.pl`, the generated
+`log_processor.py` is idiomatic Python 3.12. The legacy Perl regex-capture loop
+over a bracketed access log — for example
+`[2026-10-08 10:15:30] 192.168.1.45 GET /api/v1/users - 200` — becomes a
+compiled named-group pattern that maps each line to a record dict:
+
+```python
+# generated test/python-app/log_processor.py (illustrative excerpt)
+LINE_RE = re.compile(
+    r"^\[(?P<ts>[\d\-\s:]+)\]\s+"
+    r"(?P<ip>[\d.]+)\s+"
+    r"(?P<action>\w+)\s+"
+    r"(?P<path>\S+)\s+-\s+"
+    r"(?P<code>\d+)$"
+)
+
+def parse(path: str, max_rows: int = 5000) -> list[dict]:
+    records: list[dict] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            m = LINE_RE.match(line.rstrip("\n"))
+            if not m:
+                continue
+            rec = m.groupdict()
+            rec["code"] = int(rec["code"])   # int($status) in the Perl original
+            records.append(rec)
+            if len(records) >= max_rows:
+                break
+    return records
+```
+
+The exact structure of the generated code varies per run; what the validation
+step guarantees is that its **output** matches the Perl baseline. Normal mode
+prints a processed-record count:
+
+```console
+$ python3 python-app/log_processor.py --file input-data/app_traffic.log \
+    | diff - output-data/expected_normal.txt && echo "EQUIVALENT"
+EQUIVALENT
+
+$ cat output-data/expected_normal.txt
+Successfully processed 7 records from input-data/app_traffic.log.
+
+$ cd python-app && python3 -m pytest -q
+.......                                                            [100%]
+7 passed in 0.12s
+```
+
+Dry-run mode reproduces Perl's `Data::Dumper` layout — including the empty-match
+case, where both the Perl original and the generated Python emit an empty
+`$VAR1` array:
+
+```console
+$ python3 python-app/log_processor.py --file input-data/empty_match.log --dry-run \
+    | diff - output-data/expected_zero_dryrun.txt && echo "EQUIVALENT"
+EQUIVALENT
+
+$ cat output-data/expected_zero_dryrun.txt
+DRY RUN: Schema layout would match:
+$VAR1 = [];
+```
+
+---
+
 ## Best practices
 
-- **Standardized four-folder structure** (`source-code`, `input-data`,
-  `output-data`, plus `reference`), validated before transformation.
+- **Standardized workload layout** — `source-code/`, `input-data/`,
+  `output-data/`, and `reference/` (the reference guide travels inside the
+  workload so the transformation can read it), validated before transformation.
 - **Baseline-driven validation** — capture baselines from the real Perl
   interpreter; byte-exact for deterministic output, documented semantic
   comparison for non-deterministic output.
