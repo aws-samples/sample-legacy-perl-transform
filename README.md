@@ -191,7 +191,7 @@ plus the generated pytest suite):
 
 | Program | Source | Idioms exercised | Result |
 |---------|--------|------------------|--------|
-| `log_processor.pl` (this sample) | original | regex capture, records, dry-run | byte-exact, tests pass |
+| `log_processor.pl` (this sample) | original | regex capture, records, dry-run | byte-exact (normal, verbose, zero-match); dry-run semantic; tests pass |
 | `transpose` | perl-utils (MIT) | `split` limit, array-of-arrays, output-separator globals | COMPLETE, 27/27 criteria, byte-exact |
 | `sponge` | perl-utils (MIT) | stdin soak, `"-"` = STDOUT | byte-exact, tests pass |
 | `paragrep` | perl-utils (MIT) | regex paragraph matching, `-i`, `-e` | COMPLETE, byte-exact, tests pass |
@@ -225,71 +225,70 @@ hash-dump order is non-deterministic.
 
 ## Example output
 
-This repository ships **input-only** — the generated `test/python-app/` is not
-committed; AWS Transform custom produces it when you run Stage 2 (which is why
-the console snippets below are illustrative of a run, not files in a fresh
-clone). After a successful Stage 2 run, the generated app lands under
-`test/python-app/`. For the sample `log_processor.pl`, the generated
-`log_processor.py` is idiomatic Python 3.12. The legacy Perl regex-capture loop
-over a bracketed access log — for example
-`[2026-10-08 10:15:30] 192.168.1.45 GET /api/v1/users - 200` — becomes a
-compiled named-group pattern that maps each line to a record dict:
+This repository ships **input-only**: the generated `test/python-app/` is not
+committed. AWS Transform custom produces it when you run Stage 2, so the excerpt
+and console output below come from one of our validation runs, not from files in
+a fresh clone. Generated code varies from run to run; what the validation step
+holds constant is the program's **output**.
+
+The legacy Perl regex-capture loop becomes a precompiled `re.VERBOSE` pattern
+(the equivalent of Perl's `/x`) and a typed record:
 
 ```python
-# generated test/python-app/log_processor.py (illustrative excerpt)
-LINE_RE = re.compile(
-    r"^\[(?P<ts>[\d\-\s:]+)\]\s+"
-    r"(?P<ip>[\d.]+)\s+"
-    r"(?P<action>\w+)\s+"
-    r"(?P<path>\S+)\s+-\s+"
-    r"(?P<code>\d+)$"
+# Excerpt from a generated test/python-app/log_processor.py
+LOG_PATTERN = re.compile(
+    r"""
+    ^\[  ([\d\-\s\:]+)  \]\s+
+    ([\d\.]+)  \s+
+    (\w+)  \s+
+    (\S+)  \s+
+    \-  \s+
+    (\d+)  $
+    """,
+    re.VERBOSE,
 )
 
-def parse(path: str, max_rows: int = 5000) -> list[dict]:
-    records: list[dict] = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            m = LINE_RE.match(line.rstrip("\n"))
-            if not m:
-                continue
-            rec = m.groupdict()
-            rec["code"] = int(rec["code"])   # int($status) in the Perl original
-            records.append(rec)
-            if len(records) >= max_rows:
-                break
-    return records
+
+@dataclass
+class LogRecord:
+    """A single parsed log record."""
+
+    ts: str
+    ip: str
+    action: str
+    path: str
+    code: int
 ```
 
-The exact structure of the generated code varies per run; what the validation
-step guarantees is that its **output** matches the Perl baseline. Normal mode
-prints a processed-record count:
+Normal, verbose, and zero-match output are byte-exact against the Perl
+baselines, and the generated tests pass:
 
 ```console
 $ python3 python-app/log_processor.py --file input-data/app_traffic.log \
-    | diff - output-data/expected_normal.txt && echo "EQUIVALENT"
-EQUIVALENT
+    | diff - output-data/expected_normal.txt && echo "BYTE-EXACT"
+BYTE-EXACT
 
 $ cat output-data/expected_normal.txt
 Successfully processed 7 records from input-data/app_traffic.log.
 
 $ cd python-app && python3 -m pytest -q
-.......                                                            [100%]
-7 passed in 0.12s
+.......                                                                  [100%]
+7 passed in 3.94s
 ```
 
-Dry-run mode reproduces Perl's `Data::Dumper` layout — including the empty-match
-case, where both the Perl original and the generated Python emit an empty
-`$VAR1` array:
+Dry-run output is **semantically** equivalent, not byte-exact. Perl prints the
+records with `Data::Dumper`, whose hash-key order is not stable between runs.
+The generated Python prints one JSON object per record with sorted keys:
 
 ```console
-$ python3 python-app/log_processor.py --file input-data/empty_match.log --dry-run \
-    | diff - output-data/expected_zero_dryrun.txt && echo "EQUIVALENT"
-EQUIVALENT
-
-$ cat output-data/expected_zero_dryrun.txt
+$ python3 python-app/log_processor.py --file input-data/app_traffic.log --dry-run | head -2
 DRY RUN: Schema layout would match:
-$VAR1 = [];
+{"action": "GET", "code": 200, "ip": "192.168.1.45", "path": "/api/v1/users", "ts": "2026-10-08 10:15:30"}
 ```
+
+So the check for dry-run compares parsed records rather than raw text. Against
+`expected_dryrun.txt` that gives the same 7 records with the same values in the
+same order. For the empty-match case, both sides produce zero records.
 
 ---
 
